@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: constructezy-socket
+    runtime: node
+    plan: free # the scheduler + sockets need an always-on instance: free instances sleep after 15 min idle → use starter
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /
+    envVars:
+      - key: MONGODB_DB
+        value: Sport-Ecommerce
+      # set these in the Render dashboard (secrets, never commit them)
+      - key: MONGODB_URI
+        sync: false
+      - key: SOCKET_JWT_SECRET
+        sync: false
+      - key: SOCKET_EMIT_SECRET
+        sync: false
+      - key: NEXT_BASE_URL
+        sync: false
+      # cron scheduler (scheduler.js): the Next.js site URL + the same CRON_SECRET as on Vercel
+      - key: APP_URL
+        sync: false
+      - key: CRON_SECRET
+        sync: false
