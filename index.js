@@ -58,6 +58,7 @@ app.post("/emit", (req, res) => {
   if (data?.bookingId) for (const [k, v] of activeJobCache) if (v.bookingId === String(data.bookingId) || !v.bookingId) activeJobCache.delete(k);
   if (event === "accept-booking" || event === "booking-update") activeJobCache.clear();
   if (room === "admins") io.to("admins").emit(event, data);
+  else if (room === "support-staff") io.to("support-staff").emit(event, data); // staff with chat access (Team & Access)
   else if (userId) io.to(`user-${userId}`).emit(event, data);
   else return res.status(400).json({ success: false });
   log("emit:", event, "->", room || `user-${userId}`);
@@ -95,7 +96,11 @@ io.use(async (socket, next) => {
   }
 });
 
-const adminsOnline = () => (io.sockets.adapter.rooms.get("admins")?.size || 0) > 0;
+// support agents = the owner ("admin") or staff whose Job Role allows support chat ("support").
+// Staff never join "admins", so they never get other admin events (orders, bookings, ...).
+const isAgent = (s) => s.role === "admin" || s.role === "support";
+const roomSize = (r) => io.sockets.adapter.rooms.get(r)?.size || 0;
+const adminsOnline = () => roomSize("admins") + roomSize("support-staff") > 0;
 
 const lastSaved = new Map(); // userId -> { t, lat, lon }  (DB write throttle)
 const activeJobCache = new Map(); // labourUserId -> { t, bookingId|null }
@@ -128,13 +133,14 @@ io.on("connection", (socket) => {
   socket.data.jobs = new Map(); // bookingId -> { role, site:[lon,lat], status, near, lastEmit }
   socket.join(`user-${socket.userId}`);
   if (socket.role === "admin") socket.join("admins");
+  if (socket.role === "support") socket.join("support-staff");
   log("socket connected:", socket.id, "role:", socket.role, "user:", socket.userId.slice(-4),
     "origin:", socket.handshake.headers.origin);
 
   // support chat presence: admins see who is online, users see if support is online
-  if (socket.role === "admin") io.emit("support:admin-presence", { online: true });
+  if (isAgent(socket)) io.emit("support:admin-presence", { online: true });
   else {
-    io.to("admins").emit("support:presence", { userId: socket.userId, online: true });
+    io.to("admins").to("support-staff").emit("support:presence", { userId: socket.userId, online: true });
     socket.emit("support:admin-presence", { online: adminsOnline() });
   }
 
@@ -237,16 +243,16 @@ io.on("connection", (socket) => {
   //      pushed through /emit; the socket only carries typing + presence (nothing is stored here). ----
   socket.on("support:typing", ({ to, typing } = {}) => {
     const t = !!typing;
-    if (socket.role === "admin") {
+    if (isAgent(socket)) {
       if (mongoose.isValidObjectId(to)) io.to(`user-${to}`).emit("support:typing", { from: "admin", typing: t });
     } else {
-      io.to("admins").emit("support:typing", { userId: socket.userId, typing: t });
+      io.to("admins").to("support-staff").emit("support:typing", { userId: socket.userId, typing: t });
     }
   });
 
   // admin asks which users are connected right now
   socket.on("support:presence-list", (ack) => {
-    if (socket.role !== "admin" || typeof ack !== "function") return;
+    if (!isAgent(socket) || typeof ack !== "function") return;
     const ids = [];
     for (const [name, members] of io.sockets.adapter.rooms) {
       if (name.startsWith("user-") && members.size > 0) ids.push(name.slice(5));
@@ -263,10 +269,10 @@ io.on("connection", (socket) => {
   socket.on("disconnect", async (reason) => {
     try {
       log("socket disconnected:", socket.id, reason, "user", socket.userId.slice(-4));
-      if (socket.role === "admin") io.emit("support:admin-presence", { online: adminsOnline() });
+      if (isAgent(socket)) io.emit("support:admin-presence", { online: adminsOnline() });
       const room = io.sockets.adapter.rooms.get(`user-${socket.userId}`);
       if (room && room.size > 0) return; // another tab/device still connected
-      if (socket.role !== "admin") io.to("admins").emit("support:presence", { userId: socket.userId, online: false });
+      if (!isAgent(socket)) io.to("admins").to("support-staff").emit("support:presence", { userId: socket.userId, online: false });
       lastSaved.delete(socket.userId);
       await User.updateOne({ _id: socket.userId }, { $set: { socketId: null, isOnline: false } });
     } catch (e) { console.error("disconnect error:", e.message); }
