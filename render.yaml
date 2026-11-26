@@ -23,3 +23,6 @@ services:
         sync: false
       - key: CRON_SECRET
         sync: false
+      # optional: error monitoring (leave unset to keep Sentry off)
+      - key: SENTRY_DSN
+        sync: false

@@ -10,6 +10,16 @@ import Booking from "./models/Booking.model.js";
 import { startScheduler } from "./scheduler.js";
 
 dotenv.config();
+// error monitoring (off unless SENTRY_DSN is set) — loaded right after env so it sees SENTRY_DSN
+const { report, sentryOn, Sentry } = await import("./sentry.js");
+// same behaviour as before (crash → Render restarts the service), but the error is reported first
+const crash = (kind) => (e) => {
+  console.error(`${kind}:`, e);
+  report(e, { kind });
+  (sentryOn ? Sentry.flush(2000) : Promise.resolve()).finally(() => process.exit(1));
+};
+process.on("unhandledRejection", crash("unhandledRejection"));
+process.on("uncaughtException", crash("uncaughtException"));
 const port = process.env.PORT || 8000;
 const MAX_ACCURACY_M = Number(process.env.MAX_ACCURACY_M) || 2000;
 const ARRIVAL_RADIUS_M = Number(process.env.ARRIVAL_RADIUS_M) || 150;
